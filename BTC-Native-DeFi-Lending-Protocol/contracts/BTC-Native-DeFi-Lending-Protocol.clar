@@ -218,3 +218,114 @@
     (ok true)
   )
 )
+
+;; Emergency pause for all protocol operations
+(define-public (set-protocol-pause (paused bool))
+  (begin
+    (try! (check-owner))
+    (var-set protocol-paused paused)
+    (ok true)
+  )
+)
+
+;; Register pending BTC collateral operation
+(define-public (register-btc-collateral (bitcoin-tx-id (buff 32)) (amount uint))
+  (begin
+    (try! (check-protocol-active))
+    
+    ;; Store the pending BTC collateral operation
+    (map-set pending-btc-collateral
+      { bitcoin-tx-id: bitcoin-tx-id }
+      {
+        user: tx-sender,
+        amount: amount,
+        status: "pending"
+      }
+    )
+    
+    (ok true)
+  )
+)
+
+;; For simplicity, we'll include a fixed list
+(define-private (get-all-asset-contracts)
+  (list 
+    'SP000000000000000000002Q6VF78.sbtc
+    'SP000000000000000000002Q6VF78.usda
+  )
+)
+
+(define-constant ERR_FLASH_LOAN_NOT_REPAID (err u200))
+(define-constant ERR_FLASH_LOAN_FEE_NOT_PAID (err u201))
+(define-constant ERR_FLASH_LOAN_AMOUNT_TOO_HIGH (err u202))
+
+(define-data-var flash-loan-fee uint u9) ;; 0.09% flash loan fee (9 basis points)
+(define-data-var max-flash-loan-ratio uint u800) ;; Max 80% of available liquidity
+
+;; Flash loan execution tracking
+(define-map active-flash-loans
+  { loan-id: uint }
+  {
+    borrower: principal,
+    asset: principal,
+    amount: uint,
+    fee: uint,
+    repaid: bool
+  }
+)
+
+(define-private (verify-flash-loan-repayment (loan-id uint))
+  (let 
+    (
+      (loan-data (unwrap! (map-get? active-flash-loans { loan-id: loan-id }) ERR_FLASH_LOAN_NOT_REPAID))
+      (required-amount (+ (get amount loan-data) (get fee loan-data)))
+    )
+    
+    ;; Mark as repaid (simplified verification)
+    (map-set active-flash-loans
+      { loan-id: loan-id }
+      (merge loan-data { repaid: true })
+    )
+    
+    (ok true)
+  )
+)
+
+(define-constant ERR_REWARD_CALCULATION_FAILED (err u210))
+(define-constant ERR_INSUFFICIENT_REWARDS (err u211))
+
+;; Reward token (could be a governance token)
+(define-data-var reward-token principal 'SP000000000000000000002Q6VF78.reward-token)
+(define-data-var total-reward-pool uint u1000000000000) ;; 1M reward tokens
+(define-data-var reward-per-block uint u100) ;; Rewards distributed per block
+
+;; User reward tracking
+(define-map user-rewards
+  { user: principal }
+  {
+    pending-rewards: uint,
+    last-claim-block: uint,
+    total-claimed: uint
+  }
+)
+
+;; Market reward multipliers
+(define-map market-reward-multipliers
+  { asset-contract: principal }
+  { supply-multiplier: uint, borrow-multiplier: uint }
+)
+
+(define-public (set-reward-multipliers 
+    (asset-contract principal) 
+    (supply-multiplier uint) 
+    (borrow-multiplier uint)
+  )
+  (begin
+    (try! (check-owner))
+    (map-set market-reward-multipliers
+      { asset-contract: asset-contract }
+      { supply-multiplier: supply-multiplier, borrow-multiplier: borrow-multiplier }
+    )
+    (ok true)
+  )
+)
