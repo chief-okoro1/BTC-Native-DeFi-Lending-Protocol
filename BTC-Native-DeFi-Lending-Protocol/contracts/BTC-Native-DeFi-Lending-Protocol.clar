@@ -70,3 +70,151 @@
     last-update-block: uint
   }
 )
+
+;; Data persistence for pending BTC collateral operations
+(define-map pending-btc-collateral
+  { bitcoin-tx-id: (buff 32) }
+  {
+    user: principal,
+    amount: uint,
+    status: (string-ascii 20)
+  }
+)
+
+;; Contract initialization
+(define-data-var contract-initialized bool false)
+
+;; Access control - only contract owner
+(define-private (check-owner)
+  (if (is-eq tx-sender CONTRACT_OWNER)
+    (ok true)
+    ERR_UNAUTHORIZED
+  )
+)
+
+;; Access control - check if protocol is operational
+(define-private (check-protocol-active)
+  (if (var-get protocol-paused)
+    ERR_PROTOCOL_PAUSED
+    (ok true)
+  )
+)
+
+
+;; Initialize protocol with initial supported assets
+(define-public (initialize-protocol (initial-assets (list 10 principal)))
+  (begin
+    (asserts! (not (var-get contract-initialized)) ERR_UNAUTHORIZED)
+    (var-set contract-initialized true)
+    (ok true)
+  )
+)
+
+
+;; Add or update a supported asset
+(define-public (set-supported-asset 
+    (asset-contract principal)
+    (collateral-factor uint)
+    (borrow-enabled bool)
+    (collateral-enabled bool)
+    (price-oracle principal)
+  )
+  (begin
+    (try! (check-owner))
+    (asserts! (<= collateral-factor u900) (err u110)) ;; Max 90% collateral factor
+    
+    (map-set supported-assets
+      { asset-contract: asset-contract }
+      {
+        collateral-factor: collateral-factor,
+        borrow-enabled: borrow-enabled,
+        collateral-enabled: collateral-enabled,
+        price-oracle: price-oracle
+      }
+    )
+    
+    ;; Initialize market data if it doesn't exist
+    (map-insert market-data
+      { asset-contract: asset-contract }
+      {
+        total-supplied: u0,
+        total-borrowed: u0,
+        supply-apy: u0,
+        borrow-apy: (var-get base-rate),
+        last-update-block: stacks-block-height
+      }
+    )
+    
+    ;; Initialize reserves if they don't exist
+    (map-insert token-reserves
+      { asset-contract: asset-contract }
+      { amount: u0 }
+    )
+    
+    (ok true)
+  )
+)
+
+;; Update protocol parameters
+(define-public (update-protocol-parameters
+    (new-liquidation-threshold (optional uint))
+    (new-liquidation-incentive (optional uint))
+    (new-protocol-fee (optional uint))
+  )
+  (begin
+    (try! (check-owner))
+    
+    ;; Update each parameter if provided
+    (if (is-some new-liquidation-threshold)
+      (var-set liquidation-threshold (unwrap-panic new-liquidation-threshold))
+      true
+    )
+    
+    (if (is-some new-liquidation-incentive)
+      (var-set liquidation-incentive (unwrap-panic new-liquidation-incentive))
+      true
+    )
+    
+    (if (is-some new-protocol-fee)
+      (var-set protocol-fee (unwrap-panic new-protocol-fee))
+      true
+    )
+    
+    (ok true)
+  )
+)
+
+;; Update interest rate model parameters
+(define-public (update-interest-rate-model
+    (new-base-rate (optional uint))
+    (new-rate-multiplier (optional uint))
+    (new-optimal-utilization (optional uint))
+    (new-reserve-factor (optional uint))
+  )
+  (begin
+    (try! (check-owner))
+    
+    ;; Update each parameter if provided
+    (if (is-some new-base-rate)
+      (var-set base-rate (unwrap-panic new-base-rate))
+      true
+    )
+    
+    (if (is-some new-rate-multiplier)
+      (var-set rate-multiplier (unwrap-panic new-rate-multiplier))
+      true
+    )
+    
+    (if (is-some new-optimal-utilization)
+      (var-set optimal-utilization (unwrap-panic new-optimal-utilization))
+      true
+    )
+    
+    (if (is-some new-reserve-factor)
+      (var-set reserve-factor (unwrap-panic new-reserve-factor))
+      true
+    )
+    
+    (ok true)
+  )
+)
